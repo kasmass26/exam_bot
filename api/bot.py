@@ -1,80 +1,50 @@
 import os
-import logging
-from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-from exams import questions
+import asyncio
 
-load_dotenv()
+from flask import Flask, request
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+app = Flask(__name__)
 
-user_question_index = {}
+
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_question_index[update.effective_chat.id] = 0
-    await send_question(update, context)
-
-async def send_question(update, context):
-    chat_id = update.effective_chat.id
-    index = user_question_index.get(chat_id, 0)
-
-    if index >= len(questions):
-        await context.bot.send_message(chat_id=chat_id, text="🎉 Exam finished!")
-        return
-
-    q = questions[index]
-    keyboard = [[opt] for opt in q["options"]]
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=q["question"],
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    await update.message.reply_text(
+        "Bot is running on Vercel 🚀"
     )
 
-async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    index = user_question_index.get(chat_id, 0)
 
-    if index >= len(questions):
-        await context.bot.send_message(chat_id=chat_id, text="No active question. Send /start to begin.")
-        return
+telegram_app.add_handler(CommandHandler("start", start))
 
-    correct = questions[index]["answer"]
-    text = update.message.text if update.message and update.message.text else ""
 
-    if text == correct:
-        await context.bot.send_message(chat_id=chat_id, text="✅ Correct!")
-    else:
-        await context.bot.send_message(chat_id=chat_id, text=f"❌ Wrong. Correct answer: {correct}")
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is alive"
 
-    user_question_index[chat_id] += 1
-    await send_question(update, context)
 
-def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN environment variable not set. See .env.example")
-        raise SystemExit("BOT_TOKEN environment variable not set")
+@app.route("/", methods=["POST"])
+def webhook():
+    data = request.get_json()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    async def process():
+        await telegram_app.initialize()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_answer))
-
-    webhook_url = os.environ.get("WEBHOOK_URL")
-    if webhook_url:
-        logger.info("Starting bot in webhook mode")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 8000)),
-            webhook_url=webhook_url
+        update = Update.de_json(
+            data,
+            telegram_app.bot,
         )
-    else:
-        logger.info("Starting bot in polling mode")
-        app.run_polling()
 
-if __name__ == "__main__":
-    main()
+        await telegram_app.process_update(update)
+
+    asyncio.run(process())
+
+    return "ok"
